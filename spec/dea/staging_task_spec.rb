@@ -60,6 +60,54 @@ describe Dea::StagingTask do
     end
   end
 
+  describe "#staging_environment" do
+    before do
+      config['staging']['environment'] = {
+        'C_INCLUDE_PATH' => '__C_INCLUDE_PATH__',
+        'LIBRARY_PATH' => '__LIBRARY_PATH__',
+        'LD_LIBRARY_PATH' => '__LD_LIBRARY_PATH__',
+        'PATH' => '__PATH__',
+        'BUILDPACK_CACHE' => '__BUILDPACK_CACHE__',
+        'HTTP_PROXY' => '__HTTP_PROXY__',
+        'NO_PROXY' => '__NO_PROXY__',
+        'BAR' => '__BAR__'
+      }
+      ENV.stub(:[]) do |k|
+        {
+          'C_INCLUDE_PATH' => '__C_INCLUDE_PATH_FROM_ENV__',
+          'PATH' => '__PATH_FROM_ENV__'
+        }[k]
+      end
+      staging.should_receive(:platform_config_path) { '__PLATFORM_CONFIG__' }
+    end
+
+    it "should include staging environment from config" do
+      staging_environment = staging.send(:staging_environment)
+
+      config['staging']['environment'].each do |k, v|
+        staging_environment.should be_include("#{k}=#{v}")
+      end
+    end
+
+    it "should include PLATFORM_CONFIG" do
+      staging_environment = staging.send(:staging_environment)
+
+      staging_environment.should be_include("PLATFORM_CONFIG=__PLATFORM_CONFIG__")
+    end
+
+    it "should include C_INCLUDE_PATH which contains dea environment value" do
+      staging_environment = staging.send(:staging_environment)
+
+      staging_environment.should match(/C_INCLUDE_PATH=.+:__C_INCLUDE_PATH_FROM_ENV__/)
+    end
+
+    it "should include PATH which contains dea environment value" do
+      staging_environment = staging.send(:staging_environment)
+
+      staging_environment.should match(/PATH=.+:__PATH_FROM_ENV__/)
+    end
+  end
+
   describe "#task_id" do
     subject { Dea::StagingTask.new(bootstrap, dir_server, attributes) }
 
