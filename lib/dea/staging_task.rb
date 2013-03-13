@@ -321,14 +321,13 @@ module Dea
     end
 
     def staging_environment
-      {
-        "PLATFORM_CONFIG" => platform_config_path,
-        "C_INCLUDE_PATH" => "#{staging_config["environment"]["C_INCLUDE_PATH"]}:#{ENV["C_INCLUDE_PATH"]}",
-        "LIBRARY_PATH" => staging_config["environment"]["LIBRARY_PATH"],
-        "LD_LIBRARY_PATH" => staging_config["environment"]["LD_LIBRARY_PATH"],
-        "PATH" => "#{staging_config["environment"]["PATH"]}:#{ENV["PATH"]}",
-        "BUILDPACK_CACHE" => staging_config["environment"]["BUILDPACK_CACHE"]
-      }.map {|k, v| "#{k}=#{v}"}.join(" ")
+      config["staging"]["environment"].dup.merge(
+        {
+          "PLATFORM_CONFIG" => platform_config_path,
+          "C_INCLUDE_PATH" => "#{staging_config["environment"]["C_INCLUDE_PATH"]}:#{ENV["C_INCLUDE_PATH"]}",
+          "PATH" => "#{staging_config["environment"]["PATH"]}:#{ENV["PATH"]}",
+        }
+      ).map {|k, v| "#{k}=#{v}"}.join(" ")
     end
 
     def staging_config
