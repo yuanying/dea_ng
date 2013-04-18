@@ -207,4 +207,85 @@ describe Dea::Task do
       expect_success
     end
   end
+
+  describe "#promise_stop" do
+    let(:response) do
+      mock("Warden::Protocol::StopResponse")
+    end
+
+    before do
+      task.stub(:container_handle) { "handle" }
+    end
+
+    it "executes a StopRequest" do
+      task.stub(:promise_warden_call) do |connection, request|
+        request.should be_kind_of(::Warden::Protocol::StopRequest)
+        request.handle.should == "handle"
+
+        delivering_promise(response)
+      end
+
+      expect { task.promise_stop.resolve }.to_not raise_error
+    end
+
+    it "can fail" do
+      task.stub(:promise_warden_call) do
+        failing_promise(RuntimeError.new("error"))
+      end
+
+      expect { task.promise_stop.resolve }.to raise_error(RuntimeError, /error/i)
+    end
+  end
+
+  describe "#promise_limit_disk" do
+    before do
+      task.stub(:disk_limit_in_bytes).and_return(1234)
+      task.stub(:container_handle).and_return("handle")
+    end
+
+    it "should make a LimitDisk request on behalf of the container" do
+      task.stub(:promise_warden_call) do |connection, request|
+        request.should be_kind_of(::Warden::Protocol::LimitDiskRequest)
+        request.handle.should == "handle"
+        request.byte.should == 1234
+        delivering_promise
+      end
+
+      task.promise_limit_disk.resolve
+    end
+
+    it "raises an error when the warden call fails" do
+      task.stub(:promise_warden_call) do
+        failing_promise(RuntimeError.new("error"))
+      end
+
+      expect{ task.promise_limit_disk.resolve }.to raise_error(RuntimeError, /error/i)
+    end
+  end
+
+  describe "#promise_limit_memory" do
+    before do
+      task.stub(:memory_limit_in_bytes).and_return(1234)
+      task.stub(:container_handle).and_return("handle")
+    end
+
+    it "should make a LimitMemory request on behalf of the container" do
+      task.stub(:promise_warden_call) do |connection, request|
+        request.should be_kind_of(::Warden::Protocol::LimitMemoryRequest)
+        request.handle.should == "handle"
+        request.limit_in_bytes.should == 1234
+        delivering_promise
+      end
+
+      task.promise_limit_memory.resolve
+    end
+
+    it "raises an error when the warden call fails" do
+      task.stub(:promise_warden_call) do
+        failing_promise(RuntimeError.new("error"))
+      end
+
+      expect{ task.promise_limit_memory.resolve }.to raise_error(RuntimeError, /error/i)
+    end
+  end
 end

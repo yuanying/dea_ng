@@ -1,3 +1,4 @@
+require "timeout"
 require "pathname"
 require "staging_plugin"
 require "installer"
@@ -11,10 +12,18 @@ module Buildpacks
       Dir.chdir(destination_directory) do
         create_app_directories
         copy_source_files
-        FileUtils.chmod_R(0744, app_dir)
-        build_pack.compile
+
+        compile_with_timeout(staging_timeout)
+
         stage_rails_console if rails_buildpack?
         create_startup_script
+        save_buildpack_info
+      end
+    end
+
+    def compile_with_timeout(timeout)
+      Timeout.timeout(timeout) do
+        build_pack.compile
       end
     end
 
@@ -22,7 +31,7 @@ module Buildpacks
       buildpack_path = "#{app_dir}/.buildpacks/#{File.basename(buildpack_url)}"
       ok = system("git clone #{buildpack_url} #{buildpack_path}")
       raise "Failed to git clone buildpack" unless ok
-      Buildpacks::Installer.new(Pathname.new(buildpack_path), app_dir)
+      Buildpacks::Installer.new(Pathname.new(buildpack_path), app_dir, cache_dir)
     end
 
     def build_pack
@@ -43,7 +52,7 @@ module Buildpacks
 
     def installers
       buildpacks_path.children.map do |buildpack|
-        Buildpacks::Installer.new(buildpack, app_dir)
+        Buildpacks::Installer.new(buildpack, app_dir, cache_dir)
       end
     end
 
@@ -94,6 +103,14 @@ BASH
       build_pack.release_info
     end
 
+    def save_buildpack_info
+      buildpack_info = {
+        "detected_buildpack"  => @build_pack.name
+      }
+
+      File.open(staging_info_path, 'w') { |f| YAML.dump(buildpack_info, f) }
+    end
+
     def environment_variables
       vars = release_info['config_vars'] || {}
       vars.each { |k, v| vars[k] = "${#{k}:-#{v}}" }
@@ -102,6 +119,10 @@ BASH
       vars["DATABASE_URL"] = database_uri if rails_buildpack? && bound_database
       vars["MEMORY_LIMIT"] = "#{application_memory}m"
       vars
+    end
+
+    def staging_timeout
+      ENV.fetch("STAGING_TIMEOUT", "900").to_i
     end
   end
 end

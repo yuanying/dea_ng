@@ -22,6 +22,12 @@ describe Dea::Bootstrap do
     Dea::Bootstrap.new(@config)
   end
 
+  let(:nats_client_mock) do
+    nats_client_mock = mock("nats_client").as_null_object
+    nats_client_mock.stub(:flush) { |&blk| blk.call }
+    nats_client_mock
+  end
+
   describe "logging setup" do
     after { bootstrap.setup_logging }
 
@@ -152,15 +158,57 @@ describe Dea::Bootstrap do
   end
 
   describe "shutdown" do
-    it "should stop and flush nats" do
+    before do
       bootstrap.setup_signal_handlers
       bootstrap.setup_instance_registry
+      bootstrap.setup_staging_task_registry
       bootstrap.setup_router_client
       bootstrap.setup_directory_server_v2
+    end
 
-      nats_client_mock = mock("nats_client")
-      nats_client_mock.should_receive(:flush)
+    context "when instances are registered" do
+      before do
+        bootstrap.instance_registry.register(Dea::Instance.new(bootstrap, {}))
+        bootstrap.instance_registry.register(Dea::Instance.new(bootstrap, {}))
+      end
 
+      it "stops registered instances" do
+        bootstrap.stub(:nats).and_return(nats_client_mock)
+
+        bootstrap.instance_registry.each do |instance|
+          instance.should_receive(:stop).and_call_original
+        end
+
+        # Accommodate the extra terminate call because we don't really
+        # exit the test when we terminate.
+        bootstrap.should_receive(:terminate).twice
+
+        bootstrap.shutdown
+      end
+    end
+
+    context "when staging tasks are registered" do
+      before do
+        bootstrap.staging_task_registry.register(Dea::StagingTask.new(bootstrap, nil, {}))
+        bootstrap.staging_task_registry.register(Dea::StagingTask.new(bootstrap, nil, {}))
+      end
+
+      it "stops registered tasks" do
+        bootstrap.stub(:nats).and_return(nats_client_mock)
+
+        bootstrap.staging_task_registry.each do |task|
+          task.should_receive(:stop).and_call_original
+        end
+
+        # Accommodate the extra terminate call because we don't really
+        # exit the test when we terminate.
+        bootstrap.should_receive(:terminate).twice
+
+        bootstrap.shutdown
+      end
+    end
+
+    it "should stop and flush nats" do
       nats_mock = mock("nats")
       nats_mock.should_receive(:stop)
       nats_mock.should_receive(:client).and_return(nats_client_mock)
@@ -174,10 +222,13 @@ describe Dea::Bootstrap do
         message["uris"][0].should match /.*\.#{bootstrap.config["domain"]}$/
       end
 
+      nats_client_mock.should_receive(:flush)
+
       bootstrap.stub(:nats).and_return(nats_mock)
 
-      # Don't want to exit tests :)
-      bootstrap.stub(:terminate)
+      # Don't want to exit tests, but ensure that we receive terminate exactly
+      # once.
+      bootstrap.should_receive(:terminate)
 
       bootstrap.shutdown
     end
@@ -337,6 +388,8 @@ describe Dea::Bootstrap do
       bootstrap.stub(:uuid => "unique-dea-id")
       bootstrap.setup_nats
       bootstrap.setup_directory_server
+      bootstrap.setup_instance_registry
+      bootstrap.setup_staging_task_registry
       bootstrap.setup_resource_manager
       bootstrap.start_nats
     end

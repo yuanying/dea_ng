@@ -17,7 +17,7 @@ module Dea
   class Instance < Task
     include EventEmitter
 
-    STAT_COLLECTION_INTERVAL_SECS = 1
+    STAT_COLLECTION_INTERVAL_SECS = 10
 
     BIND_MOUNT_MODE_MAP = {
       "ro" =>  ::Warden::Protocol::CreateRequest::BindMount::Mode::RO,
@@ -244,6 +244,7 @@ module Dea
     attr_reader :used_memory_in_bytes
     attr_reader :used_disk_in_bytes
     attr_reader :computed_pcpu    # See `man ps`
+    attr_reader :cpu_samples
 
     def initialize(bootstrap, attributes)
       super(bootstrap.config)
@@ -401,28 +402,6 @@ module Dea
           attributes["instance_debug_host_port"]      = response.host_port
           attributes["instance_debug_container_port"] = response.container_port
         end
-
-        p.deliver
-      end
-    end
-
-    def promise_limit_disk
-      Promise.new do |p|
-        request = ::Warden::Protocol::LimitDiskRequest.new
-        request.handle = @attributes["warden_handle"]
-        request.byte = disk_limit_in_bytes
-        promise_warden_call(:app, request).resolve
-
-        p.deliver
-      end
-    end
-
-    def promise_limit_memory
-      Promise.new do |p|
-        request = ::Warden::Protocol::LimitMemoryRequest.new
-        request.handle = @attributes["warden_handle"]
-        request.limit_in_bytes = memory_limit_in_bytes
-        promise_warden_call(:app, request).resolve
 
         p.deliver
       end
@@ -593,16 +572,6 @@ module Dea
       end
     end
 
-    def promise_stop
-      Promise.new do |p|
-        request = ::Warden::Protocol::StopRequest.new
-        request.handle = attributes["warden_handle"]
-        response = promise_warden_call(:app, request).resolve
-
-        p.deliver
-      end
-    end
-
     def stop(&callback)
       p = Promise.new do
         logger.info("Stopping instance")
@@ -746,7 +715,7 @@ module Dea
           :ns_used      => info_resp.cpu_stat.usage,
         }
 
-        @cpu_samples.unshift if @cpu_samples.size > 2
+        @cpu_samples.shift if @cpu_samples.size > 2
 
         if @cpu_samples.size == 2
           used = @cpu_samples[1][:ns_used] - @cpu_samples[0][:ns_used]

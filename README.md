@@ -1,4 +1,5 @@
 [![Build Status](https://travis-ci.org/cloudfoundry/dea_ng.png)](https://travis-ci.org/cloudfoundry/dea_ng)
+[![Code Climate](https://codeclimate.com/github/cloudfoundry/dea_ng.png)](https://codeclimate.com/github/cloudfoundry/dea_ng)
 
 # dea_ng
 
@@ -38,30 +39,79 @@ The URL is signed by the DEA, and the directory server checks the
 validity of the URL with the DEA before serving it.
 
 
-## Running DEA on a non-linux system (with Vagrant)
+## Usage
+
+You can run the dea executable at the command line by passing the path
+to a YAML configuration file:
+
+```shell
+bin/dea config/dea.yml
+```
+
+### Configuration
+
+The following is a partial list of the keys that are read from the YAML file:
+
+* `logging` - a [Steno configuration](http://github.com/cloudfoundry/steno#from-yaml-file)
+* `nats_uri` - a URI of the form `nats://host:port` that the DEA will use to connect to NATS.
+* `warden_socket` - the path to a unix domain socket that the DEA will use to communicate to a warden server.
+
+### Running the DEA in the provided Vagrant VM
 
 When contributing to DEA it's useful to run it as a standalone
-component. Here is how to do that:
+component. This test configuration uses [Vagrant 1.1x][vagrant].
 
-- `librarian-chef install` from `chef` director
+[vagrant]: http://docs.vagrantup.com/v2/installation/index.html
 
-- `vagrant up` to start VM that will run DEA and its dependencies.
-  (Vagrantfile is currently set up to use Ubuntu 10.04.)
+Follow these steps to set up DEA to run locally on your computer:
 
-- `vagrant ssh` to get inside the VM
+```shell
+# clone the repo
+git clone http://github.com/cloudfoundry/dea_ng
+bundle install
 
-- `/dea` contains mounted copy of dea_ng source code
-  (run `foreman start` to start dea_ng components specified in Procfile)
+# check that your version of vagrant is 1.1 or greater
+vagrant --version
 
-- `/warden` contains cloned version of Warden
-  (run `bundle exec rake warden:start[config/linux.yml]` from `/warden/warden` to start Warden)
+# create your test VM
+rake test_vm
+```
 
+Creating the test VM is likely to take a while.
+
+Note that if the rake test_vm step fails and you see an error like
+"undefined method `configure' for Vagrant" or
+"found character that cannot start any token while scanning for the next token"
+it means the version of Vagrant is too old.
+Install Vagrant version 1.1 or higher.
+
+```shell
+# initialize the test VM
+vagrant up
+
+# shell into the VM
+vagrant ssh
+
+# start warden
+cd /warden/warden
+bundle install
+rvmsudo bundle exec rake warden:start[config/test_vm.yml] > /tmp/warden.log &
+
+# start the DEA's dependencies
+cd /vagrant
+bundle install
+git submodule update --init
+foreman start > /tmp/foreman.log &
+
+# run the dea tests
+bundle exec rspec
+```
 
 ## Staging
 
 See [staging.rb](lib/dea/responders/staging.rb) for staging flow.
 
-#### NATS Messaging
+### NATS Messaging
 
 - `staging.advertise`: Stagers (now DEA's) broadcast their capacity/capability
 
@@ -72,3 +122,10 @@ See [staging.rb](lib/dea/responders/staging.rb) for staging flow.
 
 - `staging`: Stagers (in a queue group) respond to requests to stage an app
   (old protocol)
+
+## Logs
+
+The DEA's logging is handled by [Steno](https://github.com/cloudfoundry/steno).
+The DEA can be configured to log to a file, a syslog server or both. If neither is provided,
+it will log to its stdout. The logging level specifies the verbosity of the logs (e.g. 'warn',
+'info', 'debug' ...).

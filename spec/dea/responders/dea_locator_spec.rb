@@ -1,5 +1,7 @@
 require "spec_helper"
 require "dea/nats"
+require "dea/instance_registry"
+require "dea/staging_task_registry"
 require "dea/resource_manager"
 require "dea/responders/dea_locator"
 require "dea/config"
@@ -10,7 +12,9 @@ describe Dea::Responders::DeaLocator do
   let(:nats) { Dea::Nats.new(bootstrap, config) }
   let(:bootstrap) { mock(:bootstrap, :config => config) }
   let(:dea_id) { "unique-dea-id" }
-  let(:resource_manager) { Dea::ResourceManager.new }
+  let(:instance_registry) { Dea::InstanceRegistry.new }
+  let(:staging_task_registry) { Dea::StagingTaskRegistry.new }
+  let(:resource_manager) { Dea::ResourceManager.new(instance_registry, staging_task_registry) }
   let(:config) { Dea::Config.new({}) }
 
   subject { described_class.new(nats, dea_id, resource_manager, config) }
@@ -111,7 +115,7 @@ describe Dea::Responders::DeaLocator do
 
   describe "#advertise" do
     let(:available_memory) { 45678 }
-    before { resource_manager.resources["memory"].stub(:remain => available_memory) }
+    before { resource_manager.stub(:remaining_memory => available_memory) }
 
     context "when config specifies that dea is for prod-only apps" do
       before { config["only_production_apps"] = true }

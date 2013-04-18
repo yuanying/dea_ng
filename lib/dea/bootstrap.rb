@@ -66,9 +66,9 @@ module Dea
 
       setup_logging
       setup_droplet_registry
-      setup_resource_manager
       setup_instance_registry
       setup_staging_task_registry
+      setup_resource_manager
       setup_directory_server
       setup_directory_server_v2
       setup_signal_handlers
@@ -112,16 +112,20 @@ module Dea
       @droplet_registry = Dea::DropletRegistry.new(File.join(config["base_dir"], "droplets"))
     end
 
-    attr_reader :resource_manager
-
-    def setup_resource_manager
-      @resource_manager = Dea::ResourceManager.new(config["resources"])
-    end
-
     attr_reader :instance_registry
 
     def setup_instance_registry
       @instance_registry = Dea::InstanceRegistry.new(config)
+    end
+
+    attr_reader :resource_manager
+
+    def setup_resource_manager
+      @resource_manager = Dea::ResourceManager.new(
+        instance_registry,
+        staging_task_registry,
+        config["resources"]
+      )
     end
 
     def setup_staging_task_registry
@@ -521,7 +525,7 @@ module Dea
     def handle_dea_discover(message)
       rs = message.data["limits"]
 
-      unless resource_manager.could_reserve?(rs["mem"], rs["disk"], 1)
+      unless resource_manager.could_reserve?(rs["mem"], rs["disk"])
         logger.info("Couldn't accomodate resource request")
         return
       end
@@ -536,14 +540,13 @@ module Dea
 
     def calculate_discover_delay(app_id)
       delay = 0.0
-      mem = resource_manager.resources["memory"]
 
       # Penalize for instances of the same app
       instances = instance_registry.instances_for_application(app_id)
       delay += (instances.size * DISCOVER_DELAY_MS_PER_INSTANCE)
 
       # Penalize for mem usage
-      delay += (mem.used / mem.capacity.to_f) * DISCOVER_DELAY_MS_MEM
+      delay += (resource_manager.reserved_memory / resource_manager.memory_capacity.to_f) * DISCOVER_DELAY_MS_MEM
 
       [delay, DISCOVER_DELAY_MS_MAX].min.to_f / 1000
     end
@@ -624,6 +627,13 @@ module Dea
       @shutdown_processed == true
     end
 
+    def send_staging_stop
+      staging_task_registry.tasks.each do |task|
+        logger.debug "Stopping staging task #{task}"
+        task.stop
+      end
+    end
+
     def shutdown
       if @shutdown_processed
         logger.info("Shutdown already processed, doing nothing.")
@@ -640,34 +650,31 @@ module Dea
 
       unregister_directory_server_v2
 
-      pending_stops = Set.new([])
       on_pending_empty = proc do
-        logger.info("All instances stopped, exiting.")
-        nats.client.flush
-        terminate
+        logger.info("All instances and staging tasks stopped, exiting.")
+        # Terminate after nats sends all queued messages
+        nats.client.flush { terminate }
       end
 
-      instance_registry.each do |instance|
-        pending_stops.add(instance)
+      pending_stops = Set.new([])
+      pending_stops.merge(instance_registry.instances)
+      pending_stops.merge(staging_task_registry.tasks)
 
-        instance.stop do |error|
-          pending_stops.delete(instance)
+      pending_stops.each do |to_be_stopped|
+        to_be_stopped.stop do |error|
+          pending_stops.delete(to_be_stopped)
 
           if error
-            logger.warn("#{instance} failed to stop: #{error}")
+            logger.warn("#{to_be_stopped} failed to stop: #{error}")
           else
-            logger.debug("#{instance} exited")
+            logger.debug("#{to_be_stopped} exited")
           end
 
-          if pending_stops.empty?
-            on_pending_empty.call
-          end
+          on_pending_empty.call if pending_stops.empty?
         end
       end
 
-      if pending_stops.empty?
-        on_pending_empty.call
-      end
+      on_pending_empty.call if pending_stops.empty?
     end
 
     # So we can test shutdown()

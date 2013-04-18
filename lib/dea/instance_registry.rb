@@ -67,8 +67,12 @@ module Dea
       @instances[instance_id]
     end
 
-    def each
-      @instances.each { |_, instance| yield instance }
+    def each(&block)
+      @instances.each_value(&block)
+    end
+
+    def instances
+      @instances.values
     end
 
     def empty?

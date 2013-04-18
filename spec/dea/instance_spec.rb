@@ -281,6 +281,16 @@ describe Dea::Instance do
 
       instance.computed_pcpu.should > 0
     end
+
+    it "should keep only 2 cpu samples" do
+      instance.cpu_samples.should have(0).items
+      5.times do
+        instance.stub(:promise_container_info).and_return(delivering_promise(info_response1))
+        Dea::Promise.resolve(instance.promise_collect_stats)
+        sleep(0.001)
+      end
+      instance.cpu_samples.should have(2).items
+    end
   end
 
   describe "#promise_health_check" do
@@ -620,64 +630,6 @@ describe Dea::Instance do
       end
     end
 
-    describe "limiting disk" do
-      before do
-        instance.unstub(:promise_limit_disk)
-        instance.stub(:disk_limit_in_bytes).and_return(1234)
-      end
-
-      it "should make a net_in request on behalf of the container" do
-        instance.attributes["warden_handle"] = "handle"
-
-        instance.stub(:promise_warden_call) do |connection, request|
-          request.should be_kind_of(::Warden::Protocol::LimitDiskRequest)
-          request.handle.should == "handle"
-          request.byte.should == 1234
-
-          delivering_promise
-        end
-
-        expect_start.to_not raise_error
-      end
-
-      it "can fail" do
-        instance.stub(:promise_warden_call) do
-          failing_promise(RuntimeError.new("error"))
-        end
-
-        expect_start.to raise_error(RuntimeError, /error/i)
-      end
-    end
-
-    describe "limiting memory" do
-      before do
-        instance.unstub(:promise_limit_memory)
-        instance.stub(:memory_limit_in_bytes).and_return(1234)
-      end
-
-      it "should make a net_in request on behalf of the container" do
-        instance.attributes["warden_handle"] = "handle"
-
-        instance.stub(:promise_warden_call) do |connection, request|
-          request.should be_kind_of(::Warden::Protocol::LimitMemoryRequest)
-          request.handle.should == "handle"
-          request.limit_in_bytes.should == 1234
-
-          delivering_promise
-        end
-
-        expect_start.to_not raise_error
-      end
-
-      it "can fail" do
-        instance.stub(:promise_warden_call) do
-          failing_promise(RuntimeError.new("error"))
-        end
-
-        expect_start.to raise_error(RuntimeError, /error/i)
-      end
-    end
-
     describe "running a script in a container" do
       before do
         instance.attributes["warden_handle"] = "handle"
@@ -1005,37 +957,6 @@ describe Dea::Instance do
     end
     it_behaves_like 'stop script hook', 'before_stop'
     it_behaves_like 'stop script hook', 'after_stop'
-
-    describe "#promise_stop" do
-      before do
-        instance.unstub(:promise_stop)
-      end
-
-      let(:response) do
-        mock("Warden::Protocol::StopResponse")
-      end
-
-      it "executes a StopRequest" do
-        instance.attributes["warden_handle"] = "handle"
-
-        instance.stub(:promise_warden_call) do |connection, request|
-          request.should be_kind_of(::Warden::Protocol::StopRequest)
-          request.handle.should == "handle"
-
-          delivering_promise(response)
-        end
-
-        expect_stop.to_not raise_error
-      end
-
-      it "can fail" do
-        instance.stub(:promise_warden_call) do
-          failing_promise(RuntimeError.new("error"))
-        end
-
-        expect_stop.to raise_error(RuntimeError, /error/i)
-      end
-    end
   end
 
   describe "link" do

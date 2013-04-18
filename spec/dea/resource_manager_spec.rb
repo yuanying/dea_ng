@@ -1,81 +1,139 @@
 # coding: UTF-8
 
 require "spec_helper"
-
 require "dea/resource_manager"
-
-describe Dea::ResourceManager::Resource do
-  describe "#reserve" do
-    it "should return the requested amount if available" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1)
-      resource.reserve(5).should == 5
-    end
-
-    it "should return nil if the request amount isn't available" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1)
-      resource.reserve(15).should be_nil
-    end
-
-    it "should handle overcommit" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1.5)
-      resource.reserve(15).should == 15
-    end
-  end
-
-  describe "#release" do
-    it "should increase remaining resources by the appropriate amount" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1.5)
-      resource.reserve(15).should == 15
-      resource.release(10)
-      resource.remain.should == 10
-      resource.reserve(10).should == 10
-    end
-  end
-
-  describe "#could_reserve?" do
-    it "should return true if a sufficient amount is available" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1)
-      resource.could_reserve?(10).should be_true
-    end
-
-    it "should return false if a sufficient amount is not available" do
-      resource = Dea::ResourceManager::Resource.new("test", 10, 1)
-      resource.could_reserve?(20).should be_false
-    end
-  end
-end
+require "dea/instance_registry"
+require "dea/staging_task_registry"
+require "dea/staging_task"
+require "dea/instance"
 
 describe Dea::ResourceManager do
+  let(:staging_config) {
+    {
+      "memory_limit_mb" => 256,
+      "disk_limit_mb" => 1024
+    }
+  }
+  let(:bootstrap) do
+    mock(:bootstrap, :config => {
+      "staging" => staging_config
+    })
+  end
+  let(:dir_server) { mock(:dir_server) }
+  let(:instance_registry) { Dea::InstanceRegistry.new({}) }
+  let(:staging_task_registry) { Dea::StagingTaskRegistry.new }
+
+  let(:memory_mb) { 600 }
+  let(:memory_overcommit_factor) { 4 }
+  let(:disk_mb) { 4000 }
+  let(:disk_overcommit_factor) { 2 }
+  let(:nominal_memory_capacity) { memory_mb * memory_overcommit_factor }
+  let(:nominal_disk_capacity) { disk_mb * disk_overcommit_factor }
+
   let(:manager) do
-    Dea::ResourceManager.new("memory_mb" => 100, "memory_overcommit_factor" => 1.5,
-                             "disk_mb" => 100, "disk_overcommit_factor" => 1.5,
-                             "num_instances" => 100)
+    Dea::ResourceManager.new(instance_registry, staging_task_registry, {
+      "memory_mb" => memory_mb,
+      "memory_overcommit_factor" => memory_overcommit_factor,
+      "disk_mb" => disk_mb,
+      "disk_overcommit_factor" => disk_overcommit_factor
+    })
+  end
+
+  let(:instances) do
+    [
+      Dea::Instance.new(bootstrap, {
+        "limits" => { "mem" => 200, "disk" => 2000, "fds" => 1 }
+      }),
+      Dea::Instance.new(bootstrap, {
+        "limits" => { "mem" => 300, "disk" => 1000, "fds" => 1 }
+      })
+    ]
+  end
+
+  let(:staging_tasks) do
+    [
+      Dea::StagingTask.new(bootstrap, dir_server, valid_staging_attributes),
+      Dea::StagingTask.new(bootstrap, dir_server, valid_staging_attributes),
+      Dea::StagingTask.new(bootstrap, dir_server, valid_staging_attributes)
+    ]
+  end
+
+  before do
+    instances.each { |i| instance_registry.register(i) }
+    staging_tasks.each { |t| staging_task_registry.register(t) }
+  end
+
+  describe "#remaining_memory" do
+    context "when no instances or staging tasks are registered" do
+      let(:instances) { [] }
+      let(:staging_tasks) { [] }
+
+      it "returns the full memory capacity" do
+        manager.remaining_memory.should eql(memory_mb * memory_overcommit_factor)
+      end
+    end
+
+    it "returns the correct remaining memory" do
+      manager.remaining_memory.should eql(
+        nominal_memory_capacity -
+        (staging_config["memory_limit_mb"] * 3) -
+        (
+          instances[0].memory_limit_in_bytes +
+          instances[1].memory_limit_in_bytes
+        ) / (1024 * 1024)
+      )
+    end
+  end
+
+  describe "#remaining_disk" do
+    context "when no instances are registered" do
+      let(:instances) { [] }
+      let(:staging_tasks) { [] }
+
+      it "returns the full disk capacity" do
+        manager.remaining_disk.should eql(nominal_disk_capacity)
+      end
+    end
+
+    it "returns the correct remaining disk" do
+      reserved_in_bytes = instances[0].disk_limit_in_bytes + instances[1].disk_limit_in_bytes
+      reserved_in_mb = reserved_in_bytes / 1024 / 1024
+      manager.remaining_disk.should eql(
+        nominal_disk_capacity - 3 * staging_config["disk_limit_mb"] - reserved_in_mb
+      )
+    end
   end
 
   describe "could_reserve?" do
-    it "should return false if any resources are insufficient" do
-      manager.could_reserve?(200, 50, 50).should be_false # mem
-      manager.could_reserve?(50, 200, 50).should be_false # disk
-      manager.could_reserve?(50, 50, 200).should be_false # instances
+    let(:remaining_memory) do
+      reserved_for_instances = (instances[0].memory_limit_in_bytes + instances[1].memory_limit_in_bytes) / 1024 / 1024
+      reserved_for_staging = 3 * staging_config["memory_limit_mb"]
+      nominal_memory_capacity - reserved_for_instances - reserved_for_staging
     end
 
-    it "should return true if all resources are available" do
-      manager.could_reserve?(50, 50, 50).should be_true
-    end
-  end
-
-  describe "reserve" do
-    it "should return reservation if all resources are available" do
-      expected = {
-        "memory"        => 50,
-        "disk"          => 50,
-        "num_instances" => 50,
-      }
-      manager.reserve(50, 50, 50).should == expected
+    let(:remaining_disk) do
+      reserved_for_instances = (instances[0].disk_limit_in_bytes + instances[1].disk_limit_in_bytes) / 1024 / 1024
+      reserved_for_staging = 3 * staging_config["disk_limit_mb"]
+      nominal_disk_capacity - reserved_for_instances - reserved_for_staging
     end
 
-    it "should return nil if any resources aren't available" do
-      manager.reserve(50, 200, 50).should be_nil
+    context "when the given amounts of memory and disk are available \
+             (including extra 'headroom' memory)" do
+      it "can reserve" do
+        manager.could_reserve?(remaining_memory - 1, remaining_disk - 1).should be_true
+      end
+    end
+
+    context "when too much memory is being used" do
+      it "can't reserve" do
+        manager.could_reserve?(remaining_memory, 1).should be_false
+      end
+    end
+
+    context "when too much disk is being used" do
+      it "can't reserve" do
+        manager.could_reserve?(1, nominal_disk_capacity).should be_false
+      end
     end
   end
 end

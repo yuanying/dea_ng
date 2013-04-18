@@ -6,6 +6,7 @@ require 'bundler'
 Bundler.require
 
 require 'tempfile'
+require 'timeout'
 require_relative '../buildpacks/lib/buildpack'
 
 Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].map { |f| require f }
@@ -13,6 +14,9 @@ Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].map { |f| require f }
 RSpec.configure do |config|
   config.include Helpers
   config.include StagingSpecHelpers, :type => :buildpack
+  config.include BuildpackHelpers, :type => :integration
+  config.include ProcessHelpers, :type => :integration
+  config.include DeaHelpers, :type => :integration
 
   config.before do
     steno_config = {
@@ -27,6 +31,10 @@ RSpec.configure do |config|
 
     Steno.init(Steno::Config.new(steno_config))
   end
+
+  config.before(:all, :type => :integration, :requires_warden => true) { dea_start }
+
+  config.after(:all, :type => :integration, :requires_warden => true) { dea_stop }
 end
 
 STAGING_TEMP = Dir.mktmpdir

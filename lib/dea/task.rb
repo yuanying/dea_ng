@@ -137,7 +137,7 @@ module Dea
           bind_mount
         end
 
-        # Extra mounts (these typically include libs like pq, mysql, etc)
+        # extra mounts (currently just used for the buildpack cache)
         config["bind_mounts"].each do |bm|
           bind_mount = ::Warden::Protocol::CreateRequest::BindMount.new
 
@@ -158,6 +158,26 @@ module Dea
         @attributes["warden_handle"] = response.handle
         logger.user_data[:warden_handle] = response.handle
 
+        p.deliver
+      end
+    end
+
+    def promise_limit_disk
+      Promise.new do |p|
+        request = ::Warden::Protocol::LimitDiskRequest.new
+        request.handle = container_handle
+        request.byte = disk_limit_in_bytes
+        promise_warden_call(:app, request).resolve
+        p.deliver
+      end
+    end
+
+    def promise_limit_memory
+      Promise.new do |p|
+        request = ::Warden::Protocol::LimitMemoryRequest.new
+        request.handle = container_handle
+        request.limit_in_bytes = memory_limit_in_bytes
+        promise_warden_call(:app, request).resolve
         p.deliver
       end
     end
@@ -190,13 +210,23 @@ module Dea
       end
     end
 
+    def promise_stop
+      Promise.new do |p|
+        request = ::Warden::Protocol::StopRequest.new
+        request.handle = container_handle
+        promise_warden_call(:stop, request).resolve
+
+        p.deliver
+      end
+    end
+
     def promise_destroy
       Promise.new do |p|
         request = ::Warden::Protocol::DestroyRequest.new
-        request.handle = attributes["warden_handle"]
+        request.handle = container_handle
 
         begin
-          response = promise_warden_call_with_retry(:app, request).resolve
+          promise_warden_call_with_retry(:app, request).resolve
         rescue ::EM::Warden::Client::Error => error
           logger.warn("Error destroying container: #{error.message}")
         end
@@ -260,7 +290,7 @@ module Dea
 
       begin
         promise_warden_call_with_retry(:app, request).resolve
-        rescue ::EM::Warden::Client::Error => error
+      rescue ::EM::Warden::Client::Error => error
         logger.warn("Error copying files out of container: #{error.message}")
       end
     end

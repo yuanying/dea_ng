@@ -22,11 +22,13 @@ module Dea::Responders
       return unless configured_to_stage?
       subscribe_to_staging
       subscribe_to_dea_specific_staging
+      subscribe_to_staging_stop
     end
 
     def stop
       unsubscribe_from_staging
       unsubscribe_from_dea_specific_staging
+      unsubscribe_from_staging_stop
     end
 
     def handle(message)
@@ -40,8 +42,17 @@ module Dea::Responders
 
       notify_setup_completion(message, task) if should_do_async_staging
       notify_completion(message, task)
+      notify_stop(message, task)
 
       task.start
+    end
+
+    def handle_stop(message)
+      staging_task_registry.each do |task|
+        if message.data["app_id"] == task.attributes["app_id"]
+          task.stop
+        end
+      end
     end
 
     private
@@ -68,6 +79,15 @@ module Dea::Responders
       nats.unsubscribe(@dea_specified_staging_sid) if @dea_specified_staging_sid
     end
 
+    def subscribe_to_staging_stop
+      options = {:do_not_track_subscription => true}
+      @staging_stop_sid = nats.subscribe("staging.stop", options) { |message| handle_stop(message) }
+    end
+
+    def unsubscribe_from_staging_stop
+      nats.unsubscribe(@staging_stop_sid) if @staging_stop_sid
+    end
+
     def notify_setup_completion(message, task)
       task.after_setup_callback do |error|
         respond_to_message(message, {
@@ -83,7 +103,18 @@ module Dea::Responders
         respond_to_message(message, {
           :task_id => task.task_id,
           :task_log => task.task_log,
-          :error => (error.to_s if error)
+          :error => (error.to_s if error),
+          :detected_buildpack => task.detected_buildpack
+        })
+        staging_task_registry.unregister(task)
+      end
+    end
+
+    def notify_stop(message, task)
+      task.after_stop_callback do |error|
+        respond_to_message(message, {
+          :task_id => task.task_id,
+          :error => (error.to_s if error),
         })
         staging_task_registry.unregister(task)
       end
@@ -94,6 +125,7 @@ module Dea::Responders
         "task_id" => params[:task_id],
         "task_log" => params[:task_log],
         "task_streaming_log_url" => params[:streaming_log_url],
+        "detected_buildpack" => params[:detected_buildpack],
         "error" => params[:error],
       )
     end
