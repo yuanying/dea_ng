@@ -68,6 +68,7 @@ Follow these steps to set up DEA to run locally on your computer:
 ```shell
 # clone the repo
 git clone http://github.com/cloudfoundry/dea_ng
+git submodule update --init
 bundle install
 
 # check that your version of vagrant is 1.1 or greater
@@ -95,16 +96,28 @@ vagrant ssh
 # start warden
 cd /warden/warden
 bundle install
-rvmsudo bundle exec rake warden:start[config/test_vm.yml] > /tmp/warden.log &
+rvmsudo bundle exec rake warden:start[config/test_vm.yml] 2>&1 > /tmp/warden.log &
 
 # start the DEA's dependencies
 cd /vagrant
 bundle install
-git submodule update --init
 foreman start > /tmp/foreman.log &
+```
 
-# run the dea tests
+To run the tests (unit, integration or all):
+```
+bundle exec rspec spec/unit
+bundle exec rspec spec/integration
 bundle exec rspec
+```
+
+Note that the integration tests stage and run real applications, which requires an internet connection.
+They take 5-10 minutes to run, depending on your connection speed.
+
+To watch the internal NATS traffic while the tests run, do this
+in another ssh session:
+```
+nats-sub ">" -s nats://localhost:4222
 ```
 
 ## Staging
@@ -127,5 +140,11 @@ See [staging.rb](lib/dea/responders/staging.rb) for staging flow.
 
 The DEA's logging is handled by [Steno](https://github.com/cloudfoundry/steno).
 The DEA can be configured to log to a file, a syslog server or both. If neither is provided,
-it will log to its stdout. The logging level specifies the verbosity of the logs (e.g. 'warn',
-'info', 'debug' ...).
+it will log to its stdout.
+
+The following log levels exist, shown with an example of what they are used for:
+* `error` - DEA failed to download builpack cache, cannot create PID file
+* `warn` - DEA failed to destroy a warden container, DEA received invalid JSON message over NATS
+* `info` - DEA is shutting down, DEA received a request to stage/run an app, but didn't have the resources
+* `debug2` - DEA received request for instance information, but was not running the specified app
+* `debug` - DEA saved/loaded a snapshot, downloaded a droplet
